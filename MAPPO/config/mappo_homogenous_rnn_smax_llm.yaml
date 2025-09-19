@@ -1,0 +1,46 @@
+"LR": 0.002
+"NUM_ENVS": 32
+"NUM_STEPS": 128
+CKPT_EVERY_UPDATES: 1
+RESUME_FROM: "/home/androleo/tese/JaxMARL/outputs/mappo_smax_llm_run1/ckpt_2s3z_step_364544.pkl"
+"TOTAL_TIMESTEPS": 1e7
+"FC_DIM_SIZE": 128
+"GRU_HIDDEN_DIM": 128
+"UPDATE_EPOCHS": 4
+"NUM_MINIBATCHES": 4
+"GAMMA": 0.99
+"GAE_LAMBDA": 0.95
+"CLIP_EPS": 0.2
+"SCALE_CLIP_EPS": False
+"ENT_COEF": 0.0
+"VF_COEF": 0.5
+"MAX_GRAD_NORM": 0.25
+"ACTIVATION": "relu"
+"OBS_WITH_AGENT_ID": True
+"ENV_NAME": "HeuristicEnemySMAX"
+"MAP_NAME": "2s3z"
+"SEED": 0
+"ENV_KWARGS": 
+  "see_enemy_actions": True
+  "walls_cause_death": True
+  "attack_mode": "closest"
+"ANNEAL_LR": True
+
+
+"LLM":
+  "BATCH_LLM": True   # whether to query vLLM in batched mode
+  "STATE_SIZE": 1800  # token budget per decision round
+  "K_CONTEXT": 2      # how many user+assistant rounds to keep in context
+
+"MACRO_STEPS": 4      # refresh LLM command every N env steps (persist otherwise)
+
+"RESUME_ONLY_ACTOR": False  # if True, ignores critic state from older checkpoints
+
+#"OUTPUT_DIR": "/home/androleo/tese/JaxMARL/outputs/mappo_smax_llm"
+#"OUTPUT_DIR": "/home/androleo/tese/outputs/mappo_smax"
+OUTPUT_DIR: "/home/androleo/tese/JaxMARL/outputs/mappo_smax_llm_run1"
+
+# LLM+MAPPO specific toggles (safe defaults keep behavior unchanged)
+MACRO_DEVIATION_COEF: 0.05       # penalty when deviating from focus attack if available
+FOCUS_SHAPING_SCALE: 0.05        # small shaping to encourage matching focus target
+LLM_FEEDBACK: False             # send feasibility feedback to LLM in single-prompt mode
