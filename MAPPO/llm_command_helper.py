@@ -93,7 +93,7 @@ def _lazy_init():
     global _TOKENIZER, _LLM
     if _TOKENIZER is None:
         # Use a single source for both tokenizer and LLM model name
-        model_name = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-3B-Instruct")
+        model_name = os.getenv("VLLM_MODEL", "Qwen/Qwen2-1.5B-Instruct")
         _TOKENIZER = AutoTokenizer.from_pretrained(model_name)
         _LLM = LLM(
             model=model_name,
@@ -300,6 +300,7 @@ def llm_decide_actions(
     num_enemies: int,
     num_movement_actions: int = 5,
     avail_masks: list | None = None,
+    debug: bool = False,
 ) -> dict:
     """Return a dict of per-ally discrete actions selected by the LLM.
 
@@ -346,6 +347,7 @@ def llm_decide_actions(
         [system_msg, user_msg], tokenize=False, add_generation_prompt=True
     )
 
+    parse_mode = "none"
     try:
         out = _LLM.generate(
             [prompt],
@@ -360,6 +362,7 @@ def llm_decide_actions(
         # First, try strict JSON
         try:
             parsed = json.loads(reply)
+            parse_mode = "json"
         except Exception:
             # Try to extract JSON-like substring and coerce
             # Prefer a tagged JSON region
@@ -367,10 +370,13 @@ def llm_decide_actions(
             tag_end = reply.rfind("</json>")
             if tag_start != -1 and tag_end != -1 and tag_end > tag_start:
                 candidate = reply[tag_start + len("<json>"):tag_end]
+                parse_mode = "tagged"
             else:
                 brace_start = reply.find("{")
                 brace_end = reply.rfind("}")
                 candidate = reply[brace_start:brace_end + 1] if (brace_start != -1 and brace_end != -1 and brace_end > brace_start) else ""
+                if candidate:
+                    parse_mode = "braces"
             parsed = {}
             if candidate:
                 # Remove code fences/backticks
@@ -385,11 +391,14 @@ def llm_decide_actions(
                 # Regex fallback: extract ally_i:number pairs anywhere in the text
                 pairs = re.findall(r"ally_(\d+)\s*[:=]\s*(-?\d+)", reply)
                 parsed = {f"ally_{k}": int(v) for k, v in pairs}
+                if parsed:
+                    parse_mode = "pairs"
             if not parsed:
                 # As a last resort, take the first num_allies integers found in order
                 nums = re.findall(r"-?\d+", reply)
                 if len(nums) >= int(num_allies):
                     parsed = {f"ally_{i}": int(nums[i]) for i in range(int(num_allies))}
+                    parse_mode = "numbers"
                 else:
                     raise ValueError("Could not parse any ally actions from reply")
     except Exception as e:
@@ -401,15 +410,57 @@ def llm_decide_actions(
     stop_idx = int(num_movement_actions - 1)
     min_idx = 0
     max_idx = int(num_movement_actions + num_enemies - 1)
+    if debug:
+        # Truncate long replies for readability
+        _preview = (reply[:240] + "…") if isinstance(locals().get("reply"), str) and len(locals().get("reply")) > 240 else locals().get("reply")
+        print(f"[llm_decide_actions][debug] parse_mode={parse_mode} reply_preview={_preview}")
     for i in range(int(num_allies)):
         key = f"ally_{i}"
         val = parsed.get(key, stop_idx)
+        original_val = val
         try:
             val = int(val)
         except Exception:
             val = stop_idx
-        if not (min_idx <= val <= max_idx):
+        range_ok = (min_idx <= val <= max_idx)
+        if not range_ok:
             val = stop_idx
+        mask_ok = True
+        chosen_via = "parsed"
+        if avail_masks is not None and i < len(avail_masks) and isinstance(avail_masks[i], (list, tuple)) and len(avail_masks[i]) > val:
+            try:
+                mask_ok = bool(int(avail_masks[i][val]) == 1)
+            except Exception:
+                mask_ok = True
+        # Enforce availability mask with a simple, deterministic fallback policy
+        if avail_masks is not None and i < len(avail_masks) and isinstance(avail_masks[i], (list, tuple)):
+            mask = list(avail_masks[i])
+            if val >= 0 and val < len(mask) and not (mask[val] == 1):
+                # Prefer stop if allowed
+                if stop_idx < len(mask) and mask[stop_idx] == 1:
+                    val = stop_idx
+                    chosen_via = "fallback_stop"
+                else:
+                    # Prefer a legal movement direction
+                    picked = None
+                    for mv in range(0, max(0, int(num_movement_actions) - 1)):
+                        if mv < len(mask) and mask[mv] == 1:
+                            picked = mv
+                            break
+                    if picked is not None:
+                        val = int(picked)
+                        chosen_via = "fallback_move"
+                    else:
+                        # Pick first any allowed action
+                        for k, ok in enumerate(mask):
+                            if ok == 1:
+                                val = int(k)
+                                chosen_via = "fallback_any"
+                                break
+        if debug:
+            print(
+                f"[llm_decide_actions][debug] {key}: parsed={original_val} → chosen={val} (range_ok={range_ok}, mask_ok={mask_ok}, via={chosen_via})"
+            )
         actions[key] = np.int32(val)
 
     return actions

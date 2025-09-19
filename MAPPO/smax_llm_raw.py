@@ -27,11 +27,13 @@ import jax.numpy as jnp
 
 # ------------- Simple runtime settings -------------
 # Number of episodes to run for evaluation
-EPISODES = 10
+EPISODES = 2
 # Query the LLM every MACRO_STEPS env steps (1 = every step)
 MACRO_STEPS = 1
 # Per-step console logging
 VERBOSE_STEPS = False
+# Detailed LLM decision debug logs (raw reply, parse path, mask fixes)
+DEBUG_DECISIONS = True
 # Write final summary file in addition to per-episode JSONL
 WRITE_SUMMARY = True
 # Micro-control: LLM outputs per-ally discrete actions directly
@@ -82,7 +84,7 @@ def _nearest_movement_action(towards_vec: np.ndarray, move_vecs: np.ndarray) -> 
     return int(np.argmax(dots))
 
 
-def postprocess_llm_actions(env: HeuristicEnemySMAX, state, actions: dict) -> dict:
+def postprocess_llm_actions(env: HeuristicEnemySMAX, state, actions: dict, debug: bool = False) -> dict:
     s = state.state
     num_allies = env.num_allies
     num_enemies = env.num_enemies
@@ -97,11 +99,15 @@ def postprocess_llm_actions(env: HeuristicEnemySMAX, state, actions: dict) -> di
             continue
         enemy_local = a - nmove
         if not (0 <= enemy_local < num_enemies):
+            if debug:
+                print(f"[postprocess][debug] {key}: invalid enemy index from LLM a={a} → stop")
             actions[key] = np.int32(stop_idx)
             continue
         ally_idx = i
         enemy_idx = num_allies + enemy_local
         if (not bool(s.unit_alive[ally_idx])) or (not bool(s.unit_alive[enemy_idx])):
+            if debug:
+                print(f"[postprocess][debug] {key}: dead unit (ally or enemy). a={a} → stop")
             actions[key] = np.int32(stop_idx)
             continue
         ally_type = int(s.unit_types[ally_idx])
@@ -112,6 +118,8 @@ def postprocess_llm_actions(env: HeuristicEnemySMAX, state, actions: dict) -> di
             actions[key] = np.int32(a)
         else:
             move_a = _nearest_movement_action(dv, move_vecs)
+            if debug:
+                print(f"[postprocess][debug] {key}: out-of-range attack a={a}, dist={dist:.2f}, → move={move_a}")
             actions[key] = np.int32(move_a)
     return actions
 
@@ -151,10 +159,15 @@ def main():
                         num_enemies=env.num_enemies,
                         num_movement_actions=env._env.num_movement_actions,
                         avail_masks=avail_masks,
+                        debug=DEBUG_DECISIONS,
                     )
 
                 # Step env with micro actions (apply out-of-range→move fallback)
-                actions = postprocess_llm_actions(env, state, dict(current_actions))
+                if DEBUG_DECISIONS:
+                    print(f"[llm_step][debug] raw_actions={dict(current_actions)}")
+                actions = postprocess_llm_actions(env, state, dict(current_actions), debug=DEBUG_DECISIONS)
+                if DEBUG_DECISIONS:
+                    print(f"[llm_step][debug] final_actions={dict(actions)}")
                 key, step_key = jax.random.split(key)
                 obs, state, rewards, dones, infos = env.step_env(step_key, state, actions)
 
