@@ -441,7 +441,8 @@ def llm_decide_actions(
             if val >= 0 and val < len(mask) and not (mask[val] == 1):
                 is_attack_intent = val >= int(num_movement_actions)
                 if is_attack_intent:
-                    # Keep masked attack for postprocessing to handle
+                    # Keep masked attacks (even if target later turns out dead);
+                    # we do not enforce the mask on the LLM output here.
                     chosen_via = "kept_attack_mask0"
                 else:
                     # Movement masked: choose a safe fallback
