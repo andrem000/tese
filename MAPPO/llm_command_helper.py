@@ -432,16 +432,20 @@ def llm_decide_actions(
                 mask_ok = bool(int(avail_masks[i][val]) == 1)
             except Exception:
                 mask_ok = True
-        # Enforce availability mask with a simple, deterministic fallback policy
+        # Enforce availability mask with a deterministic policy, but preserve
+        # attack intent: if the chosen action is an attack (>= num_movement_actions)
+        # and it is masked (out-of-range now), keep it so postprocess can convert
+        # it into a movement towards the target. Only override masked movement.
         if avail_masks is not None and i < len(avail_masks) and isinstance(avail_masks[i], (list, tuple)):
             mask = list(avail_masks[i])
             if val >= 0 and val < len(mask) and not (mask[val] == 1):
-                # Prefer stop if allowed
-                if stop_idx < len(mask) and mask[stop_idx] == 1:
-                    val = stop_idx
-                    chosen_via = "fallback_stop"
+                is_attack_intent = val >= int(num_movement_actions)
+                if is_attack_intent:
+                    # Keep masked attack for postprocessing to handle
+                    chosen_via = "kept_attack_mask0"
                 else:
-                    # Prefer a legal movement direction
+                    # Movement masked: choose a safe fallback
+                    # Prefer any legal movement direction first
                     picked = None
                     for mv in range(0, max(0, int(num_movement_actions) - 1)):
                         if mv < len(mask) and mask[mv] == 1:
@@ -450,6 +454,9 @@ def llm_decide_actions(
                     if picked is not None:
                         val = int(picked)
                         chosen_via = "fallback_move"
+                    elif stop_idx < len(mask) and mask[stop_idx] == 1:
+                        val = stop_idx
+                        chosen_via = "fallback_stop"
                     else:
                         # Pick first any allowed action
                         for k, ok in enumerate(mask):
